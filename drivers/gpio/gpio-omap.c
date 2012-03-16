@@ -21,6 +21,7 @@
 #include <linux/io.h>
 #include <linux/slab.h>
 #include <linux/pm_runtime.h>
+#include <linux/bitops.h>
 
 #include <mach/hardware.h>
 #include <asm/irq.h>
@@ -28,6 +29,8 @@
 #include <mach/gpio.h>
 #include <asm/mach/irq.h>
 #include <plat/omap-pm.h>
+
+#include "../mux.h"
 
 static LIST_HEAD(omap_gpio_list);
 
@@ -49,6 +52,8 @@ struct gpio_regs {
 
 	u32 ew_leveldetect0;
 	u32 ew_leveldetect1;
+
+	u32 pad_set_wakeupenable;
 };
 
 struct gpio_bank {
@@ -89,6 +94,8 @@ struct gpio_bank {
 
 	void (*set_dataout)(struct gpio_bank *bank, int gpio, int enable);
 	struct omap_gpio_reg_offs *regs;
+
+	struct omap_mux *mux[32];
 };
 
 static void omap_gpio_mod_init(struct gpio_bank *bank);
@@ -785,6 +792,7 @@ static struct irq_chip gpio_irq_chip = {
 	.irq_unmask	= gpio_unmask_irq,
 	.irq_set_type	= gpio_irq_type,
 	.irq_set_wake	= gpio_wake_enable,
+	.flags		= IRQCHIP_MASK_ON_SUSPEND,
 };
 
 /*---------------------------------------------------------------------*/
@@ -965,6 +973,8 @@ static struct lock_class_key gpio_lock_class;
 
 static void omap_gpio_mod_init(struct gpio_bank *bank)
 {
+	int i;
+
 	if (bank->width == 32) {
 		u32 clr_all = 0;		/* clear all the bits */
 		u32 set_all = 0xFFFFFFFF;	/* set all the bits */
@@ -1059,6 +1069,11 @@ static void omap_gpio_mod_init(struct gpio_bank *bank)
 			omap_writel(omap_readl(ULPD_CAM_CLK_CTRL) | 0x04,
 						ULPD_CAM_CLK_CTRL);
 		}
+	}
+
+	for (i = 0; i < bank->width; i++) {
+		int gpio = irq_to_gpio(bank->virtual_irq_start + i);
+		bank->mux[i] = omap_mux_get_gpio(gpio);
 	}
 }
 
@@ -1295,6 +1310,35 @@ static int omap_gpio_resume(struct device *dev)
 #ifdef CONFIG_ARCH_OMAP2PLUS
 static void omap_gpio_save_context(struct gpio_bank *bank);
 static void omap_gpio_restore_context(struct gpio_bank *bank);
+
+static void omap2_gpio_set_wakeupenables(struct gpio_bank *bank)
+{
+	unsigned long pad_wakeup;
+	int i;
+
+	bank->context.pad_set_wakeupenable = 0;
+
+	pad_wakeup = __raw_readl(bank->base + bank->regs->irqenable);
+
+	for_each_set_bit(i, &pad_wakeup, bank->width) {
+		if (!omap_mux_get_wakeupenable(bank->mux[i])) {
+			bank->context.pad_set_wakeupenable |= BIT(i);
+			omap_mux_set_wakeupenable(bank->mux[i]);
+		}
+	}
+}
+
+static void omap2_gpio_clear_wakeupenables(struct gpio_bank *bank)
+{
+	unsigned long pad_wakeup;
+	int i;
+
+	pad_wakeup = bank->context.pad_set_wakeupenable;
+
+	for_each_set_bit(i, &pad_wakeup, bank->width)
+		omap_mux_clear_wakeupenable(bank->mux[i]);
+}
+
 #endif
 
 static int omap_gpio_pm_runtime_suspend(struct device *dev)
@@ -1510,6 +1554,8 @@ int omap2_gpio_prepare_for_idle(int off_mode, bool suspend)
 	struct gpio_bank *bank;
 
 	list_for_each_entry(bank, &omap_gpio_list, node) {
+		omap2_gpio_set_wakeupenables(bank);
+
 		if (omap2_gpio_set_edge_wakeup(bank, suspend))
 			ret = -EBUSY;
 
@@ -1538,7 +1584,10 @@ void omap2_gpio_resume_after_idle(int off_mode)
 						__func__, bank->id);
 
 		omap2_gpio_restore_edge_wakeup(bank);
-}
+
+		omap2_gpio_clear_wakeupenables(bank);
+	}
+
 }
 void omap_gpio_save_context(struct gpio_bank *bank)
 {
