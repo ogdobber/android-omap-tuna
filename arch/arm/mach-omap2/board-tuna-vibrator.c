@@ -31,7 +31,7 @@
 #define GPIO_MOTOR_EN_REV05	54
 
 #define VIB_GPTIMER_NUM		10
-#define PWM_DUTY_MAX		1450
+#define PWM_DUTY_MAX		1300
 #define MAX_TIMEOUT		10000 /* 10s */
 
 static struct vibrator {
