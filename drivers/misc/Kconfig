@@ -588,4 +588,10 @@ config SOUND_CONTROL
   help
     Enable support for Sound Control
 
+config VIBRATOR_CONTROL
+  bool "Enable support for Vibrator Control"
+  default y
+  help
+    Enable support for Vibrator Control
+
 endif # MISC_DEVICES
