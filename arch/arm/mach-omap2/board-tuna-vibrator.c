@@ -20,13 +20,10 @@
 #include <linux/mutex.h>
 #include <asm/mach-types.h>
 #include <plat/dmtimer.h>
-<<<<<<< HEAD
-=======
 
 #ifdef CONFIG_VIBRATOR_CONTROL
 #include <linux/delay.h>
 #endif
->>>>>>> f1b28f8... change to ezekeel vibe so it works with eze app
 
 #include <../../../drivers/staging/android/timed_output.h>
 
