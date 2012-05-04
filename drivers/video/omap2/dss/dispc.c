@@ -45,6 +45,7 @@
 
 #include "../clockdomain.h"
 #include "dss.h"
+#include "gammatable.h"
 #include "dss_features.h"
 #include "dispc.h"
 
@@ -1480,9 +1481,8 @@ static void _dispc_set_scaling_common(enum omap_plane plane,
 	int accu0 = 0;
 	int accu1 = 0;
 	u32 l;
-	u16 y_adjust = color_mode == OMAP_DSS_COLOR_NV12 ? 2 : 0;
 
-	_dispc_set_scale_param(plane, orig_width, orig_height - y_adjust,
+	_dispc_set_scale_param(plane, orig_width, orig_height,
 				out_width, out_height, five_taps,
 				rotation, DISPC_COLOR_COMPONENT_RGB_Y);
 	l = dispc_read_reg(DISPC_OVL_ATTRIBUTES(plane));
@@ -1534,7 +1534,6 @@ static void _dispc_set_scaling_uv(enum omap_plane plane,
 {
 	int scale_x = out_width != orig_width;
 	int scale_y = out_height != orig_height;
-	u16 y_adjust = 0;
 
 	if (!dss_has_feature(FEAT_HANDLE_UV_SEPARATE))
 		return;
@@ -1551,7 +1550,6 @@ static void _dispc_set_scaling_uv(enum omap_plane plane,
 		orig_height >>= 1;
 		/* UV is subsampled by 2 horz.*/
 		orig_width >>= 1;
-		y_adjust = 1;
 		break;
 	case OMAP_DSS_COLOR_YUV2:
 	case OMAP_DSS_COLOR_UYVY:
@@ -1575,7 +1573,7 @@ static void _dispc_set_scaling_uv(enum omap_plane plane,
 	if (out_height != orig_height)
 		scale_y = true;
 
-	_dispc_set_scale_param(plane, orig_width, orig_height - y_adjust,
+	_dispc_set_scale_param(plane, orig_width, orig_height,
 			out_width, out_height, five_taps,
 				rotation, DISPC_COLOR_COMPONENT_UV);
 
@@ -1660,6 +1658,9 @@ static void _dispc_set_rotation_attrs(enum omap_plane plane, u8 rotation,
 			row_repeat = true;
 		else
 			row_repeat = false;
+	} else if (color_mode == OMAP_DSS_COLOR_NV12) {
+		/* WA for OMAP4+ UV plane overread HW bug */
+		vidrot = 1;
 	}
 
 	REG_FLD_MOD(DISPC_OVL_ATTRIBUTES(plane), vidrot, 13, 12);
@@ -2792,6 +2793,53 @@ bool dispc_trans_key_enabled(enum omap_channel ch)
 		BUG();
 
 	return enabled;
+}
+
+/* valid inputs for gamma are from 1 to 10 that map
+  from 0.2 to 2.2 gamma values and 0 for disabled */
+int dispc_enable_gamma(enum omap_channel ch, u8 gamma)
+{
+#ifdef CONFIG_ARCH_OMAP4
+	bool enabled;
+	u32 i, temp, channel;
+	static bool enable[MAX_DSS_MANAGERS];
+
+	enabled = enable[ch];
+
+	switch (ch) {
+	case OMAP_DSS_CHANNEL_LCD:
+		channel = 0;
+		break;
+	case OMAP_DSS_CHANNEL_LCD2:
+		channel = 1;
+		break;
+	case OMAP_DSS_CHANNEL_DIGIT:
+		channel = 2;
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	if (gamma > NO_OF_GAMMA_TABLES || gamma < 0)
+		return -EINVAL;
+
+	if (gamma) {
+		const u8 *tablePtr = gamma_table[gamma - 1];
+
+		for (i = 0; i < GAMMA_TBL_SZ; i++) {
+			temp =  tablePtr[i];
+			temp =  (i<<24)|(temp|(temp<<8)|(temp<<16));
+			dispc_write_reg(DISPC_GAMMA_TABLE + (channel*4), temp);
+		}
+	}
+	enabled = (enabled & ~(1 << channel)) | (gamma ? (1 << channel) : 0);
+	REG_FLD_MOD(DISPC_CONFIG, (enabled & 1), 3, 3);
+	REG_FLD_MOD(DISPC_CONFIG, !!(enabled & 6), 9, 9);
+
+	enable[ch] = enabled;
+
+#endif
+	return 0;
 }
 
 
