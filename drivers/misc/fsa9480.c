@@ -36,7 +36,6 @@
 #include <linux/usb/otg_id.h>
 #include <linux/seq_file.h>
 #include <linux/debugfs.h>
-#include <linux/fastchg.h>
 
 #define DEBUG_DUMP_REGISTERS
 
@@ -156,6 +155,7 @@ static const char *device_names[] = {
 	[FSA9480_DETECT_UART]			= "uart",
 	[FSA9480_DETECT_AV_365K]		= "av-365k",
 	[FSA9480_DETECT_AV_365K_CHARGER]	= "av-365k-charger",
+	[FSA9480_DETECT_AV_POWERED]		= "av-powered",
 };
 
 struct usbsw_nb_info {
@@ -517,15 +517,7 @@ static int fsa9480_detect_callback(struct otg_id_notifier_block *nb)
 		/* usb peripheral mode */
 		if (!(nb_info->detect_set->mask & FSA9480_DETECT_USB))
 			goto unhandled;
-#ifdef CONFIG_FORCE_FAST_CHARGE
-		if (force_fast_charge != 0) {
-		_detected(usbsw, FSA9480_DETECT_CHARGER);
-		} else {
 		_detected(usbsw, FSA9480_DETECT_USB);
-		}
-#else
-		_detected(usbsw, FSA9480_DETECT_USB);
-#endif
 		goto handled;
 	} else if (dev_type & DEV_UART_MASK) {
 		if (!(nb_info->detect_set->mask & FSA9480_DETECT_UART))
@@ -587,6 +579,13 @@ static int fsa9480_detect_callback(struct otg_id_notifier_block *nb)
 				goto unhandled;
 			}
 			goto handled;
+		} else if ((nb_info->detect_set->mask &
+				FSA9480_DETECT_AV_POWERED) &&
+				usbsw->pdata->vbus_present()) {
+			_detected(usbsw, FSA9480_DETECT_AV_POWERED);
+			enable_irq(usbsw->pdata->external_vbus_irq);
+			mutex_unlock(&usbsw->lock);
+			return OTG_ID_HANDLED;
 		}
 	} else if (dev_type == 0) {
 		usbsw->curr_dev = 0;
@@ -756,7 +755,8 @@ static irqreturn_t vbus_irq_thread(int irq, void *data)
 	disable_irq_nosync(usbsw->pdata->external_vbus_irq);
 
 	mutex_lock(&usbsw->lock);
-	if (usbsw->curr_dev != FSA9480_DETECT_AV_365K_CHARGER) {
+	if (usbsw->curr_dev != FSA9480_DETECT_AV_365K_CHARGER &&
+			usbsw->curr_dev != FSA9480_DETECT_AV_POWERED) {
 		mutex_unlock(&usbsw->lock);
 		return IRQ_HANDLED;
 	}

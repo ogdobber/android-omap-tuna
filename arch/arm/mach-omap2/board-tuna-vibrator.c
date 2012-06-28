@@ -21,10 +21,6 @@
 #include <asm/mach-types.h>
 #include <plat/dmtimer.h>
 
-#ifdef CONFIG_VIBRATOR_CONTROL
-#include <linux/delay.h>
-#endif
-
 #include <../../../drivers/staging/android/timed_output.h>
 
 #include "mux.h"
@@ -47,27 +43,6 @@ static struct vibrator {
 	unsigned gpio_en;
 } vibdata;
 
-#ifdef CONFIG_VIBRATOR_CONTROL
-extern void vibratorcontrol_register_vibstrength(int vibstrength);
-
-void vibratorcontrol_update(int vibstrength)
-{
-    while (vibdata.enabled || !mutex_trylock(&vibdata.lock))
-	msleep(50);
-
-    omap_dm_timer_set_load(vibdata.gptimer, 1, -vibstrength);
-    vibdata.gptimer->context.tldr = (unsigned int)-vibstrength;
-
-    omap_dm_timer_set_match(vibdata.gptimer, 1, -vibstrength+10);
-    vibdata.gptimer->context.tmar = (unsigned int)(-vibstrength+10);
-
-    mutex_unlock(&vibdata.lock);
-
-    return;
-}
-EXPORT_SYMBOL(vibratorcontrol_update);
-#endif
-
 static void vibrator_off(void)
 {
 	if (!vibdata.enabled)
@@ -88,6 +63,25 @@ static int vibrator_get_time(struct timed_output_dev *dev)
 	return 0;
 }
 
+static int vibrator_timer_init(void)
+{
+	int ret;
+
+	ret = omap_dm_timer_set_source(vibdata.gptimer,
+		OMAP_TIMER_SRC_SYS_CLK);
+	if (ret < 0)
+		return ret;
+
+	omap_dm_timer_set_load(vibdata.gptimer, 1, -PWM_DUTY_MAX);
+	omap_dm_timer_set_match(vibdata.gptimer, 1, -PWM_DUTY_MAX+10);
+	omap_dm_timer_set_pwm(vibdata.gptimer, 0, 1,
+		OMAP_TIMER_TRIGGER_OVERFLOW_AND_COMPARE);
+	omap_dm_timer_enable(vibdata.gptimer);
+	omap_dm_timer_write_counter(vibdata.gptimer, -2);
+	omap_dm_timer_disable(vibdata.gptimer);
+	return 0;
+}
+
 static void vibrator_enable(struct timed_output_dev *dev, int value)
 {
 	mutex_lock(&vibdata.lock);
@@ -97,7 +91,7 @@ static void vibrator_enable(struct timed_output_dev *dev, int value)
 
 	if (value) {
 		wake_lock(&vibdata.wklock);
-
+		vibrator_timer_init();
 		gpio_set_value(vibdata.gpio_en, 1);
 		omap_dm_timer_start(vibdata.gptimer);
 
@@ -143,18 +137,11 @@ static int __init vibrator_init(void)
 	if (vibdata.gptimer == NULL)
 		return -1;
 
-	ret = omap_dm_timer_set_source(vibdata.gptimer,
-		OMAP_TIMER_SRC_SYS_CLK);
+	omap_dm_timer_dump_regs(vibdata.gptimer);
+	ret = vibrator_timer_init();
 	if (ret < 0)
-		goto err_dm_timer_src;
-
-	omap_dm_timer_set_load(vibdata.gptimer, 1, -PWM_DUTY_MAX);
-	omap_dm_timer_set_match(vibdata.gptimer, 1, -PWM_DUTY_MAX+10);
-	omap_dm_timer_set_pwm(vibdata.gptimer, 0, 1,
-		OMAP_TIMER_TRIGGER_OVERFLOW_AND_COMPARE);
-	omap_dm_timer_enable(vibdata.gptimer);
-	omap_dm_timer_write_counter(vibdata.gptimer, -2);
-	omap_dm_timer_disable(vibdata.gptimer);
+		goto err_dm_timer_init;
+	omap_dm_timer_dump_regs(vibdata.gptimer);
 
 	wake_lock_init(&vibdata.wklock, WAKE_LOCK_SUSPEND, "vibrator");
 	mutex_init(&vibdata.lock);
@@ -163,17 +150,13 @@ static int __init vibrator_init(void)
 	if (ret < 0)
 		goto err_to_dev_reg;
 
-#ifdef CONFIG_VIBRATOR_CONTROL
-	vibratorcontrol_register_vibstrength(PWM_DUTY_MAX);
-#endif
-
 	return 0;
 
 err_to_dev_reg:
 	mutex_destroy(&vibdata.lock);
 	wake_lock_destroy(&vibdata.wklock);
 
-err_dm_timer_src:
+err_dm_timer_init:
 	omap_dm_timer_free(vibdata.gptimer);
 	vibdata.gptimer = NULL;
 

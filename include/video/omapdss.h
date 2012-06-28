@@ -425,7 +425,6 @@ struct omap_overlay_manager_info {
 
 	bool cpr_enable;
 	struct omap_dss_cpr_coefs cpr_coefs;
-	u8 gamma;
 };
 
 struct omap_overlay_manager {
@@ -596,6 +595,11 @@ struct omap_dss_device {
 	void (*platform_disable)(struct omap_dss_device *dssdev);
 	int (*set_backlight)(struct omap_dss_device *dssdev, int level);
 	int (*get_backlight)(struct omap_dss_device *dssdev);
+};
+
+struct omap_dss_hdmi_data
+{
+	int hpd_gpio;
 };
 
 struct omap_dss_driver {

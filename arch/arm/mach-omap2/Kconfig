@@ -337,6 +337,7 @@ config MACH_TUNA
 config OMAP3_EMU
 	bool "OMAP3 debugging peripherals"
 	depends on ARCH_OMAP3
+	select ARM_AMBA
 	select OC_ETM
 	help
 	  Say Y here to enable debugging hardware of omap3
@@ -390,12 +391,5 @@ config OMAP4_PPA_CPU1_ONLINE_BUG
 	  default as enabled.
 
 endmenu
-
-config FORCE_FAST_CHARGE
-	bool "Force AC charge mode at will"
-	default y
-	help
-	  A simple sysfs interface to force adapters that
-	  are detected as USB to charge as AC.
 
 endif
